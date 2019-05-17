@@ -1,4 +1,4 @@
-import os, csv, subprocess, datetime, argparse, glob
+import os, csv, subprocess, datetime, argparse, glob, sys
 
 # argument input
 desc_str = """
@@ -18,8 +18,8 @@ id_list = []
 
 # assign woid
 if not args.w and not args.a and not args.fw and not args.fa and not args.m and not args.fm and not args.l:
-    print('usage:\npython3.5 cwlbleau.py -w <woid>\npython3.5 cwlbleau.py -f <file of woids>')
-    quit()
+    sys.exit('usage:\npython3.5 cwlbleau.py -w <woid>\npython3.5 cwlbleau.py -f <file of woids>')
+
 elif args.w:
     anp_or_woid = "WorkOrder"
     id_list.append(args.w)
@@ -228,13 +228,61 @@ def write_library_results(results_dict, outfile, header_list):
     return
 
 
+def file_pick(list_of_files, file_type):
+
+    list_of_files = [file.split('/')[-1] for file in list_of_files]
+    print('\n----------\n')
+    print('There are {} {} files, please select a file:'.format(len(list_of_files), file_type))
+    for number, file in enumerate(list_of_files, 1):
+        print('{}. {}'.format(number, file))
+    print('\nPlease select a file:')
+
+    while True:
+        # print files to terminal, with no, have user pick file, return file name
+        user_input = input()
+        if user_input.isdigit() and int(user_input) > 0 and int(user_input) - 1 < len(list_of_files):
+            return list_of_files[int(user_input) - 1]
+
+        print('Please pick a file number between 1 and {}:'.format(len(list_of_files)))
+
+
 def file_check(file_dir):
-    os.chdir(file_dir+'/results')
-    print(os.getcwd())
-    hs_files = glob.glob('*HsMetrics.txt')
-    print(hs_files)
-    exit()
-    return
+    exome_qc_files_dict = {}
+    exome_qc_file_list = ['HsMetrics', 'mark_dups_metrics', 'GcBiasMetricsSummary',
+                          'AlignmentSummaryMetrics', 'WgsMetrics', 'InsertSizeMetrics',
+                          'VerifyBamId.selfSM', '.cram']
+
+    while True:
+        for qc_file in exome_qc_file_list:
+            found_files = glob.glob(file_dir+'/results/*{}*'.format(qc_file))
+
+        # check each file used,
+        # hsmetrics files
+            if not found_files:
+                print('\n----------\n')
+                print('{} file not found, result will be FNF.'.format(qc_file))
+                exome_qc_files_dict[qc_file] = qc_file
+                continue
+
+            if len(found_files) > 1:
+                exome_qc_files_dict[qc_file] = file_pick(found_files, qc_file)
+            else:
+                print('\n----------\n')
+                print('Only 1 {file_name} file found. QC\'ing with {file_name}.'.format(file_name=qc_file))
+                exome_qc_files_dict[qc_file] = qc_file
+
+        # if there's only one, assign to file dict
+        # else, check with user which file type to use
+        # return file profile to qc, user accepts.
+        print('\n**********')
+        print('Exome QC Profile\n')
+        for file_name, file in sorted(exome_qc_files_dict.items()):
+            print('{}: {}'.format(file_name, file))
+        file_confirm = input('\nconfirm file selection y, anything else to re-start:\n')
+
+        if 'y' in file_confirm.lower():
+            print('**********')
+            return exome_qc_files_dict
 
 
 # Aye ordered these columns
@@ -252,24 +300,16 @@ met_wgs_header[1] = anp_or_woid
 for id in id_list:
 
     if args.w or args.fw:
-        print('cwlbleau\'ing: {}'.format(id))
+        print('\ncwlbleau\'ing: {}'.format(id))
         model_groups_id = 'model_groups.project.id=' + id
 
         # run genome model command to generate model info
         model_groups = subprocess.check_output(['genome', 'model', 'list', model_groups_id, "--show",
                                                 "last_succeeded_build.id,name,status,last_succeeded_build.data_directory,"
                                                 "subject.name", "--style=tsv", "--nohead"]).decode('utf-8').splitlines()
-        print(model_groups)
-
-        for line in model_groups:
-            line = line.split('\t')
-            indicies = [l for l in line if '/' in l]
-        print(indicies)
-        file_check(indicies[0])
-        exit()
 
     if args.a or args.fa:
-        print('cwlbleau\'ing: {}'.format(id))
+        print('\ncwlbleau\'ing: {}'.format(id))
         model_groups_id = 'analysis_project.id=' + id
 
         # run genome model command to generate model info
@@ -278,7 +318,7 @@ for id in id_list:
                                                 "subject.name", "--style=tsv", "--nohead"]).decode('utf-8').splitlines()
 
     if args.m or args.fm:
-        print('cwlbleau\'ing: {}'.format(id))
+        print('\ncwlbleau\'ing: {}'.format(id))
         model_groups_id = 'model_groups.id=' + id
 
         # run genome model command to generate model info
@@ -286,9 +326,13 @@ for id in id_list:
                                                 "last_succeeded_build.id,name,status,last_succeeded_build.data_directory,"
                                                 "subject.name", "--style=tsv", "--nohead"]).decode('utf-8').splitlines()
 
+    model_group_dir = model_groups[0].split('\t')[3]
+    exome_qc_files = file_check(model_group_dir)
+
     # create outfiles
     cwd_metrics_outfile = id + '.cwl.metrics.' + mm_dd_yy + '.tsv'
-    print('Metrics outfile: {}'.format(cwd_metrics_outfile))
+    print('\nMetrics outfile: {}\n'.format(cwd_metrics_outfile))
+    print('----------')
     if os.path.isfile(cwd_metrics_outfile):
         os.remove(cwd_metrics_outfile)
 
@@ -299,12 +343,12 @@ for id in id_list:
     # Admin name
     # disapled admin query because of lims/gms docker container issue
     ap_new = "NA"
-    # if args.w or args.fw:
-    #     admin_collections = subprocess.check_output(["wo_info", "--report", "billing", "--woid", id]).decode(
-    #         'utf-8').splitlines()
-    #     for ap in admin_collections:
-    #         if 'Administration Project' in ap:
-    #             ap_new = ap.split(':')[1].strip()
+    if args.w or args.fw:
+        admin_collections = subprocess.check_output(["wo_info", "--report", "billing", "--woid", id]).decode(
+            'utf-8').splitlines()
+        for ap in admin_collections:
+            if 'Administration Project' in ap:
+                ap_new = ap.split(':')[1].strip()
 
     # call methods to generate results
     for line in model_groups:
@@ -328,21 +372,22 @@ for id in id_list:
             os.chdir(info[3] + '/results')
 
             results['cram_file'] = 'NA'
-            if os.path.isfile('final.cram'):
-                results['cram_file'] = os.getcwd() + '/final.cram'
+            if os.path.isfile(exome_qc_files['.cram']):
+                results['cram_file'] = os.getcwd() + '/{}'.format(exome_qc_files['.cram'])
 
-            if os.path.isfile('VerifyBamId.selfSM'):
-                verify_bamid('VerifyBamId.selfSM')
+            if os.path.isfile(exome_qc_files['VerifyBamId.selfSM']):
+                verify_bamid(exome_qc_files['VerifyBamId.selfSM'])
             else:
                 results['SEQ_ID'] = 'FNF'
                 results['FREEMIX'] = 'FNF'
 
-            if os.path.isfile('InsertSizeMetrics.txt'):
-                insert_size_metrics('InsertSizeMetrics.txt')
+            if os.path.isfile(exome_qc_files['InsertSizeMetrics']):
+                insert_size_metrics(exome_qc_files['InsertSizeMetrics'])
             else:
                 results['MEAN_INSERT_SIZE'] = 'FNF'
                 results['STANDARD_DEVIATION'] = 'FNF'
 
+            # add file to file check if need later
             if os.path.isfile('flagstat.out'):
                 flagstat_out('flagstat.out')
             else:
@@ -351,19 +396,19 @@ for id in id_list:
                 results['discordant_rate'] = 'FNF'
                 results['inter-chromosomal_Pairing rate'] = 'FNF'
 
-            if os.path.isfile('mark_dups_metrics.txt'):
-                perc_dup = mark_dups_metrics('mark_dups_metrics.txt', info[4])
+            if os.path.isfile(exome_qc_files['mark_dups_metrics']):
+                perc_dup = mark_dups_metrics(exome_qc_files['mark_dups_metrics'], info[4])
             else:
                 results['PERCENT_DUPLICATION'] = 'FNF'
                 perc_dup = False
 
-            if os.path.isfile('GcBiasMetricsSummary.txt'):
-                gcbias_metrics_summary('GcBiasMetricsSummary.txt')
+            if os.path.isfile(exome_qc_files['GcBiasMetricsSummary']):
+                gcbias_metrics_summary(exome_qc_files['GcBiasMetricsSummary'])
             else:
                 results['ALIGNED_READS'] = 'FNF'
 
-            if os.path.isfile('AlignmentSummaryMetrics.txt'):
-                pfalgnbases = alignment_summary_metrics('AlignmentSummaryMetrics.txt')
+            if os.path.isfile(exome_qc_files['AlignmentSummaryMetrics']):
+                pfalgnbases = alignment_summary_metrics(exome_qc_files['AlignmentSummaryMetrics'])
             else:
                 results['TOTAL_READS'] = 'FNF'
                 results['PF_READS'] = 'FNF'
@@ -373,8 +418,8 @@ for id in id_list:
                 results['PCT_ADAPTER'] = 'FNF'
                 pfalgnbases = False
 
-            if os.path.isfile('WgsMetrics.txt'):
-                genome_terr = wgs_metrics('WgsMetrics.txt')
+            if os.path.isfile(exome_qc_files['WgsMetrics']):
+                genome_terr = wgs_metrics(exome_qc_files['WgsMetrics'])
             else:
                 results['GENOME_TERRITORY'] = 'FNF'
                 results['MEAN_COVERAGE'] = 'FNF'
@@ -392,8 +437,8 @@ for id in id_list:
             else:
                 results['HAPLOID COVERAGE'] = 'FNF'
 
-            if os.path.isfile('HsMetrics.txt'):
-                header_add_fields = hs_metrics('HsMetrics.txt')
+            if os.path.isfile(exome_qc_files['HsMetrics']):
+                header_add_fields = hs_metrics(exome_qc_files['HsMetrics'])
                 metrics_header = met_wgs_header + header_add_fields
                 # metrics_header = list(results.keys())
                 # metrics_header.sort()
@@ -409,7 +454,7 @@ for id in id_list:
                 sample_library = []
                 os.chdir(info[3] + '/results')
 
-                with open('mark_dups_metrics.txt', 'r') as getmettxt:
+                with open(exome_qc_files['mark_dups_metrics'], 'r') as getmettxt:
                     infile_reader = csv.reader(getmettxt, delimiter='\t')
                     for line in infile_reader:
                         if line and 'lib' in line[0]:
@@ -423,14 +468,14 @@ for id in id_list:
                     results['Library'] = sample
 
                     # update mark_dup_metrics for individual library
-                    with open('mark_dups_metrics.txt', 'r') as getmettxt:
+                    with open(exome_qc_files['mark_dups_metrics'], 'r') as getmettxt:
                         infile_reader = csv.reader(getmettxt, delimiter='\t')
                         for line in infile_reader:
                             if line and sample in line[0]:
                                 results['PERCENT_DUPLICATION'] = line[8]
 
                     # update alignment summary metrics for individual library
-                    with open('AlignmentSummaryMetrics.txt', 'r') as aligntxt:
+                    with open(exome_qc_files['AlignmentSummaryMetrics'], 'r') as aligntxt:
                         infile_reader = csv.reader(aligntxt, delimiter='\t')
                         pf_aligned_bases = float()
                         for line in infile_reader:
@@ -449,7 +494,7 @@ for id in id_list:
                                     results['PCT_ADAPTER'] = line[23]
 
                     # update HsMetrics.txt for individual library
-                    with open('HsMetrics.txt', 'r') as hasmettxt:
+                    with open(exome_qc_files['HsMetrics'], 'r') as hasmettxt:
                         infile_reader = csv.reader(hasmettxt, delimiter='\t')
                         for line in infile_reader:
                             if 'BAIT_SET' in line:
@@ -461,7 +506,7 @@ for id in id_list:
                             results[metric] = hs_metrics_dict[metric]
 
                     # update InsertSizeMetrics.txt for individual library
-                    with open('InsertSizeMetrics.txt', 'r') as inserttxt:
+                    with open(exome_qc_files['InsertSizeMetrics'], 'r') as inserttxt:
                         infile_reader = csv.reader(inserttxt, delimiter='\t')
                         for line in infile_reader:
                             if 'MEAN_INSERT_SIZE' in line:
